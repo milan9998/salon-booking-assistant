@@ -1,0 +1,11 @@
+.env
+*.env
+*.db
+*.db-*
+*.log
+appointments.txt
+node_modules/
+**/bin/
+**/obj/
+backup-*/
+outputs/

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="sr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Salon termini</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <section id="loginView" class="login-card">
+      <div class="brand-mark">S</div>
+      <p class="eyebrow">FRIZERSKI SALON</p>
+      <h1>Prijava</h1>
+      <p class="muted">Pregled zakazanih i otkazanih termina.</p>
+      <form id="loginForm">
+        <label>Korisničko ime<input id="username" autocomplete="username" required value="admin" /></label>
+        <label>Lozinka<input id="password" type="password" autocomplete="current-password" required /></label>
+        <button class="primary" type="submit">Prijavi se</button>
+        <p id="loginError" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="calendarView" class="calendar-view hidden">
+      <header class="topbar">
+        <div><p class="eyebrow">FRIZERSKI SALON</p><h1>Termini</h1></div>
+        <div class="top-actions"><span id="userLabel" class="muted"></span><button id="callAgentBtn" class="call-btn">☎ Pozovi agenta</button><button id="changePasswordBtn" class="ghost hidden">Lozinka</button><button id="refreshBtn" class="ghost">Osveži</button><button id="logoutBtn" class="ghost">Odjava</button></div>
+      </header>
+      <section class="salon-bar" aria-label="Izbor salona">
+        <div class="salon-picker"><label for="salonSelect">Salon</label><select id="salonSelect"></select></div>
+        <div id="salonMeta" class="salon-meta"></div><button id="scheduleBtn" class="ghost">Radno vreme</button>
+        <button id="provisionBtn" class="ghost hidden">Poveži alate i znanje</button><button id="addOwnerBtn" class="ghost hidden">+ Nalog vlasnika</button><button id="addSalonBtn" class="primary small">+ Dodaj salon</button>
+      </section>
+      <div class="content-grid">
+        <section class="calendar-card">
+          <div class="calendar-head"><button id="prevMonth" class="icon-btn" aria-label="Prethodni mesec">‹</button><h2 id="monthTitle"></h2><button id="nextMonth" class="icon-btn" aria-label="Sledeći mesec">›</button></div>
+          <div class="weekdays"><span>Ned</span><span>Pon</span><span>Uto</span><span>Sre</span><span>Čet</span><span>Pet</span><span>Sub</span></div>
+          <div id="calendar" class="calendar-grid"></div>
+          <div class="calendar-scope">
+            <p class="eyebrow">PRIKAZ KALENDARA</p>
+            <p id="scopeLabel" class="scope-label">Ceo salon</p>
+            <p class="scope-help">Izaberi zaposlenog da vidiš njegove termine ili ostavi „Ceo salon“ za vlasnički pregled.</p>
+            <div id="staffFilters" class="staff-filters" role="group" aria-label="Izbor zaposlenog"></div>
+          </div>
+          <div class="legend"><span><i class="dot confirmed"></i> Zakazano</span><span><i class="dot cancelled"></i> Otkazano</span></div>
+        </section>
+        <aside class="day-card"><div class="day-head"><div><p class="eyebrow">IZABRANI DAN</p><h2 id="selectedTitle"></h2><p id="selectedScope" class="selected-scope"></p></div><span id="dayCount" class="count"></span></div><div id="appointments" class="appointments"></div></aside>
+      </div>
+    </section>
+
+    <dialog id="scheduleDialog" class="salon-dialog">
+      <form id="scheduleForm" method="dialog">
+        <div class="dialog-head"><h2>Radno vreme salona</h2><button id="closeScheduleBtn" type="button" class="icon-btn" aria-label="Zatvori">×</button></div>
+        <p class="muted dialog-copy">Izaberi ceo salon ili zaposlenog. Zaposleni može imati svoj raspored koji zamenjuje opšti.</p>
+        <label>Raspored za<select id="scheduleStaff"></select></label>
+        <label>Radni dani (0=nedelja, 1=ponedeljak … 6=subota)<input id="scheduleDays" required placeholder="1,2,3,4,5,6" /></label>
+        <label>Početak<input id="scheduleStart" type="time" required /></label>
+        <label>Kraj<input id="scheduleEnd" type="time" required /></label>
+        <label>Pauze (jedna po redu, npr. 13:00-13:30)<textarea id="scheduleBreaks" rows="3"></textarea></label>
+        <p id="scheduleError" class="error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancelScheduleBtn" type="button" class="ghost">Odustani</button><button class="primary" type="submit">Sačuvaj</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="salonDialog" class="salon-dialog">
+      <form id="salonForm" method="dialog">
+        <div class="dialog-head"><div><p class="eyebrow">NOVI SALON</p><h2>Dodaj salon i agenta</h2></div><button id="closeSalonBtn" type="button" class="icon-btn" aria-label="Zatvori">×</button></div>
+        <p class="muted dialog-copy">Prvo ručno napravi zasebnog agenta u ElevenLabs. Posle čuvanja klikni „Poveži alate i znanje“; taj korak menja prompt tog agenta i dodaje tri posebna alata.</p>
+        <label>Naziv salona<input id="salonName" required maxlength="120" placeholder="Salon Ana" /></label>
+        <label>ElevenLabs agent ID<input id="salonAgentId" required pattern="agent_[A-Za-z0-9]+" placeholder="agent_..." /></label>
+        <div class="form-two"><label>Frizeri / osoblje<input id="salonBarbers" value="Marko, Nikola" placeholder="Marko, Nikola" /></label><label>Usluge<input id="salonServices" value="sisanje, brada, sisanje-i-brada" placeholder="sisanje, brada" /></label></div>
+        <label>Interna beleška o znanju salona<textarea id="salonKnowledge" maxlength="20000" placeholder="Radno vreme, cenovnik, pravila..."></textarea></label>
+        <p id="salonError" class="error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancelSalonBtn" type="button" class="ghost">Odustani</button><button class="primary" type="submit">Sačuvaj salon</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="ownerDialog" class="salon-dialog">
+      <form id="ownerForm" method="dialog">
+        <div class="dialog-head"><div><p class="eyebrow">PRISTUP SALONU</p><h2>Dodaj vlasnika</h2></div><button id="closeOwnerBtn" type="button" class="icon-btn" aria-label="Zatvori">×</button></div>
+        <p class="muted dialog-copy">Nalog će videti samo trenutno izabrani salon.</p>
+        <label>Korisničko ime<input id="ownerUsername" required minlength="4" maxlength="50" pattern="[a-zA-Z0-9._-]+" autocomplete="off" /></label>
+        <p id="ownerError" class="error" role="alert"></p>
+        <p id="ownerResult" class="hint" aria-live="polite"></p>
+        <div class="dialog-actions"><button id="cancelOwnerBtn" type="button" class="ghost">Zatvori</button><button class="primary" type="submit">Napravi nalog</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="passwordDialog" class="salon-dialog">
+      <form id="passwordForm" method="dialog">
+        <div class="dialog-head"><h2>Promeni lozinku</h2><button id="closePasswordBtn" type="button" class="icon-btn" aria-label="Zatvori">×</button></div>
+        <label>Trenutna lozinka<input id="currentPassword" type="password" required autocomplete="current-password" /></label>
+        <label>Nova lozinka (najmanje 14 znakova)<input id="newPassword" type="password" required minlength="14" autocomplete="new-password" /></label>
+        <p id="passwordError" class="error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancelPasswordBtn" type="button" class="ghost">Odustani</button><button class="primary" type="submit">Sačuvaj</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="callDialog" class="call-dialog">
+      <form method="dialog">
+        <div class="dialog-head"><div><p class="eyebrow">WEB POZIV</p><h2 id="callTitle">Poziv sa agentom</h2></div><button id="closeCallBtn" type="submit" class="icon-btn" aria-label="Zatvori">×</button></div>
+        <p id="callInfo" class="muted dialog-copy">Dozvoli mikrofon u browseru, pa započni razgovor.</p>
+        <div id="agentWidgetHost" class="agent-widget-host"></div>
+        <p class="call-note">Ovaj test koristi isti agent i iste webhook alate kao budući telefonski poziv.</p>
+      </form>
+    </dialog>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
