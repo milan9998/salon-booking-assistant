@@ -27,12 +27,17 @@ public static class BookingPolicy
         var weekdays = window.TryGetProperty("weekdays", out var days) ? days.EnumerateArray().Select(x => x.GetInt32()).ToArray() : [1, 2, 3, 4, 5, 6];
         var start = window.TryGetProperty("start", out var startElement) ? startElement.GetString() ?? "09:00" : "09:00";
         var end = window.TryGetProperty("end", out var endElement) ? endElement.GetString() ?? "18:00" : "18:00";
+        return new ScheduleWindow(weekdays, start, end, ReadBreaks(window));
+    }
+
+    private static BreakWindow[] ReadBreaks(JsonElement window)
+    {
         var breaks = new List<BreakWindow>();
         if (window.TryGetProperty("breaks", out var breaksElement))
         {
             foreach (var item in breaksElement.EnumerateArray()) breaks.Add(new BreakWindow(item.GetProperty("start").GetString()!, item.GetProperty("end").GetString()!));
         }
-        return new ScheduleWindow(weekdays, start, end, breaks.ToArray());
+        return breaks.ToArray();
     }
 
     public static SlotDecision CheckSlot(string time, int durationMinutes, DateOnly date, string barber, Salon salon, TimeZoneInfo? zone = null)
@@ -45,13 +50,22 @@ public static class BookingPolicy
         var end = start.AddMinutes(durationMinutes);
         var close = TimeOnly.ParseExact(window.End, "HH:mm", CultureInfo.InvariantCulture);
         if (start < TimeOnly.ParseExact(window.Start, "HH:mm", CultureInfo.InvariantCulture) || end > close)
-        {
-            var last = close.AddMinutes(-durationMinutes);
-            var detail = last >= TimeOnly.ParseExact(window.Start, "HH:mm", CultureInfo.InvariantCulture) ? $"Za ovu uslugu poslednji početak termina je {last:HH\\:mm}." : "Za ovu uslugu nema dovoljno vremena u rasporedu.";
-            return new("OUTSIDE_HOURS", $"Radno vreme za {barber} je od {window.Start} do {window.End}. {detail}");
-        }
-        var pause = window.Breaks.FirstOrDefault(x => start < TimeOnly.ParseExact(x.End, "HH:mm", CultureInfo.InvariantCulture) && TimeOnly.ParseExact(x.Start, "HH:mm", CultureInfo.InvariantCulture) < end);
+            return CreateOutsideHoursDecision(window, barber, durationMinutes, close);
+        var pause = FindOverlappingBreak(window.Breaks, start, end);
         if (pause is not null) return new("ON_BREAK", $"{barber} ima pauzu od {pause.Start} do {pause.End}.");
         return new("AVAILABLE", "Traženo vreme je u radnom vremenu.");
     }
+
+    private static SlotDecision CreateOutsideHoursDecision(ScheduleWindow window, string barber, int durationMinutes, TimeOnly close)
+    {
+        var last = close.AddMinutes(-durationMinutes);
+        var detail = last >= TimeOnly.ParseExact(window.Start, "HH:mm", CultureInfo.InvariantCulture)
+            ? $"Za ovu uslugu poslednji početak termina je {last:HH\\:mm}."
+            : "Za ovu uslugu nema dovoljno vremena u rasporedu.";
+        return new("OUTSIDE_HOURS", $"Radno vreme za {barber} je od {window.Start} do {window.End}. {detail}");
+    }
+
+    private static BreakWindow? FindOverlappingBreak(IEnumerable<BreakWindow> breaks, TimeOnly start, TimeOnly end)
+        => breaks.FirstOrDefault(x => start < TimeOnly.ParseExact(x.End, "HH:mm", CultureInfo.InvariantCulture)
+            && TimeOnly.ParseExact(x.Start, "HH:mm", CultureInfo.InvariantCulture) < end);
 }

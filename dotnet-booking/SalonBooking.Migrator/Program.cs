@@ -17,9 +17,14 @@ var options = new DbContextOptionsBuilder<BookingDbContext>().UseNpgsql(connecti
 await using var db = new BookingDbContext(options);
 var summary = await new SqliteDataImporter(db).ImportAsync(sqlite);
 Console.WriteLine($"Migracija završena: izvor saloni={summary.SourceSalons}, radnici={summary.SourceWorkers}, usluge={summary.SourceServices}, termini={summary.SourceAppointments}, vlasnici={summary.SourceOwners}; PostgreSQL ukupno saloni={summary.TargetSalons}, radnici={summary.TargetWorkers}, usluge={summary.TargetServices}, termini={summary.TargetAppointments}, vlasnici={summary.TargetOwners}.");
-if (summary.SourceSalons != summary.TargetSalons || summary.SourceWorkers != summary.TargetWorkers || summary.SourceServices != summary.TargetServices || summary.SourceAppointments != summary.TargetAppointments || summary.SourceOwners != summary.TargetOwners)
+if (!HasMatchingRecordCounts(summary))
 {
     Console.Error.WriteLine("PROVERA NIJE PROŠLA: broj zapisa se ne poklapa.");
     return 1;
 }
 return 0;
+
+static bool HasMatchingRecordCounts(MigrationSummary summary)
+    => summary.SourceSalons == summary.TargetSalons && summary.SourceWorkers == summary.TargetWorkers
+        && summary.SourceServices == summary.TargetServices && summary.SourceAppointments == summary.TargetAppointments
+        && summary.SourceOwners == summary.TargetOwners;

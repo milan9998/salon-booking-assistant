@@ -27,7 +27,7 @@ public sealed class BookingController(IMediator mediator, IBookingDbContext db) 
     [HttpGet("appointments")]
     public async Task<IActionResult> Appointments([FromQuery(Name = "salon_id")] string salonId, CancellationToken cancellationToken)
     {
-        if (!await Authorize(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
+        if (!await IsAuthorizedForSalonAsync(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
         return Ok(new { ok = true, salon_id = salonId, appointments = await mediator.Send(new GetAppointmentsQuery(salonId), cancellationToken) });
     }
 
@@ -35,7 +35,7 @@ public sealed class BookingController(IMediator mediator, IBookingDbContext db) 
     public async Task<IActionResult> CheckAvailability([FromBody] AvailabilityRequest request, CancellationToken cancellationToken)
     {
         var salonId = request.SalonId ?? HeaderSalonId();
-        if (!await Authorize(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
+        if (!await IsAuthorizedForSalonAsync(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
         if (!DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", out var date)) return Ok(new { ok = false, code = "INVALID_DATE", reason = "Potreban je važeći datum u formatu YYYY-MM-DD." });
         var result = await mediator.Send(new CheckAvailabilityQuery(salonId, date, request.Service ?? "", request.Barber, request.Time), cancellationToken);
         return Ok(result);
@@ -45,8 +45,8 @@ public sealed class BookingController(IMediator mediator, IBookingDbContext db) 
     public async Task<IActionResult> Book([FromBody] BookRequest request, CancellationToken cancellationToken)
     {
         var salonId = request.SalonId ?? HeaderSalonId();
-        if (!await Authorize(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
-        if (!DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", out var date) || !TimeOnly.TryParseExact(request.Time, "HH:mm", out var time)) return BadRequest(new { ok = false, error = "Potrebni su date u formatu YYYY-MM-DD i time u formatu HH:MM." });
+        if (!await IsAuthorizedForSalonAsync(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
+        if (!TryParseAppointmentDateTime(request.Date, request.Time, out var date, out var time)) return BadRequest(new { ok = false, error = "Potrebni su date u formatu YYYY-MM-DD i time u formatu HH:MM." });
         var result = await mediator.Send(new BookAppointmentCommand(salonId, date, time, request.Service ?? "", request.Barber ?? "", request.CustomerName ?? "", request.Phone ?? ""), cancellationToken);
         return result.Ok ? StatusCode(201, result) : Ok(result);
     }
@@ -55,24 +55,35 @@ public sealed class BookingController(IMediator mediator, IBookingDbContext db) 
     public async Task<IActionResult> Cancel([FromBody] CancelRequest request, CancellationToken cancellationToken)
     {
         var salonId = request.SalonId ?? HeaderSalonId();
-        if (!await Authorize(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
-        if (!DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", out var date) || !TimeOnly.TryParseExact(request.Time, "HH:mm", out var time)) return BadRequest(new { ok = false, error = "Potrebni su date u formatu YYYY-MM-DD i time u formatu HH:MM." });
+        if (!await IsAuthorizedForSalonAsync(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
+        if (!TryParseAppointmentDateTime(request.Date, request.Time, out var date, out var time)) return BadRequest(new { ok = false, error = "Potrebni su date u formatu YYYY-MM-DD i time u formatu HH:MM." });
         var result = await mediator.Send(new CancelAppointmentCommand(salonId, date, time, request.Phone ?? ""), cancellationToken);
         return result.Ok ? Ok(result) : NotFound(result);
     }
 
     private string HeaderSalonId() => Request.Headers.TryGetValue("X-Salon-Id", out var value) && !string.IsNullOrWhiteSpace(value) ? value.ToString() : "default";
 
-    private async Task<bool> Authorize(string salonId, CancellationToken cancellationToken)
+    private static bool TryParseAppointmentDateTime(string? dateText, string? timeText, out DateOnly date, out TimeOnly time)
+    {
+        time = default;
+        return DateOnly.TryParseExact(dateText, "yyyy-MM-dd", out date) && TimeOnly.TryParseExact(timeText, "HH:mm", out time);
+    }
+
+    private async Task<bool> IsAuthorizedForSalonAsync(string salonId, CancellationToken cancellationToken)
     {
         var salon = await db.Salons.AsNoTracking().SingleOrDefaultAsync(x => x.Id == salonId, cancellationToken);
         if (salon is null) return false;
         if (SessionStore.TryGet(Request, out var identity) && identity is not null)
             return identity.Kind == "platform" || identity.SalonId == salonId;
+        return HasValidWebhookSecret(salon.WebhookSecretHash);
+    }
+
+    private bool HasValidWebhookSecret(string? secretHash)
+    {
         var supplied = Request.Headers["X-Agent-Secret"].ToString();
-        if (string.IsNullOrWhiteSpace(supplied) || string.IsNullOrWhiteSpace(salon.WebhookSecretHash)) return false;
+        if (string.IsNullOrWhiteSpace(supplied) || string.IsNullOrWhiteSpace(secretHash)) return false;
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(supplied))).ToLowerInvariant();
-        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(digest), Encoding.UTF8.GetBytes(salon.WebhookSecretHash));
+        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(digest), Encoding.UTF8.GetBytes(secretHash));
     }
 }
 

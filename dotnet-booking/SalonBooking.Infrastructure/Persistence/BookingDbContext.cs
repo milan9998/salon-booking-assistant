@@ -14,6 +14,15 @@ public sealed class BookingDbContext(DbContextOptions<BookingDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigureSalon(modelBuilder);
+        ConfigureAppointment(modelBuilder);
+        ConfigureWorker(modelBuilder);
+        ConfigureService(modelBuilder);
+        ConfigureOwnerAccount(modelBuilder);
+    }
+
+    private static void ConfigureSalon(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<Salon>(entity =>
         {
             entity.ToTable("salons");
@@ -31,7 +40,10 @@ public sealed class BookingDbContext(DbContextOptions<BookingDbContext> options)
             entity.Property(x => x.ScheduleJson).HasColumnName("schedule_json").IsRequired();
             entity.Property(x => x.IntegrationReady).HasColumnName("integration_ready");
         });
+    }
 
+    private static void ConfigureAppointment(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<Appointment>(entity =>
         {
             entity.ToTable("appointments");
@@ -53,7 +65,10 @@ public sealed class BookingDbContext(DbContextOptions<BookingDbContext> options)
             entity.HasOne(x => x.Worker).WithMany(x => x.Appointments).HasForeignKey(x => x.WorkerId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.Service).WithMany(x => x.Appointments).HasForeignKey(x => x.ServiceId).OnDelete(DeleteBehavior.Restrict);
         });
+    }
 
+    private static void ConfigureWorker(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<Worker>(entity =>
         {
             entity.ToTable("workers");
@@ -65,7 +80,10 @@ public sealed class BookingDbContext(DbContextOptions<BookingDbContext> options)
             entity.HasIndex(x => new { x.SalonId, x.Name }).IsUnique();
             entity.HasOne(x => x.Salon).WithMany(x => x.Workers).HasForeignKey(x => x.SalonId).OnDelete(DeleteBehavior.Cascade);
         });
+    }
 
+    private static void ConfigureService(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<SalonService>(entity =>
         {
             entity.ToTable("services");
@@ -78,7 +96,10 @@ public sealed class BookingDbContext(DbContextOptions<BookingDbContext> options)
             entity.HasIndex(x => new { x.SalonId, x.Name }).IsUnique();
             entity.HasOne(x => x.Salon).WithMany(x => x.Services).HasForeignKey(x => x.SalonId).OnDelete(DeleteBehavior.Cascade);
         });
+    }
 
+    private static void ConfigureOwnerAccount(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<OwnerAccount>(entity =>
         {
             entity.ToTable("owner_accounts");

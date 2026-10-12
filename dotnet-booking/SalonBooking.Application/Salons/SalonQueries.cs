@@ -2,6 +2,7 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using SalonBooking.Application.Common;
 using System.Text.Json;
+using SalonBooking.Domain.Entities;
 
 namespace SalonBooking.Application.Salons;
 
@@ -20,14 +21,16 @@ public sealed class GetSalonsQueryHandler(IBookingDbContext db) : IRequestHandle
         var salons = await db.Salons.AsNoTracking().OrderBy(x => x.Name).ToListAsync(cancellationToken);
         var workers = await db.Workers.AsNoTracking().Where(x => x.Active).OrderBy(x => x.Name).ToListAsync(cancellationToken);
         var services = await db.Services.AsNoTracking().Where(x => x.Active).OrderBy(x => x.Name).ToListAsync(cancellationToken);
-        return salons.Select(x =>
-        {
-            var salonWorkers = workers.Where(w => w.SalonId == x.Id).Select(w => new WorkerDto(w.Id, w.Name, w.Active)).ToList();
-            var salonServices = services.Where(s => s.SalonId == x.Id).Select(s => new ServiceDto(s.Id, s.Name, s.DurationMinutes, s.Active)).ToList();
-            using var document = JsonDocument.Parse(x.ScheduleJson);
-            return new SalonDto(x.Id, x.Name, x.AgentId, x.Timezone, x.ServicesJson, x.BarbersJson, x.KnowledgeNotes,
-                x.ScheduleJson, x.IntegrationReady, salonServices.Select(s => s.Name).ToList(), salonWorkers.Select(w => w.Name).ToList(),
-                document.RootElement.Clone(), salonWorkers, salonServices);
-        }).ToList();
+        return salons.Select(salon => MapSalonToDto(salon, workers, services)).ToList();
+    }
+
+    private static SalonDto MapSalonToDto(Salon salon, IReadOnlyList<Worker> workers, IReadOnlyList<SalonService> services)
+    {
+        var salonWorkers = workers.Where(w => w.SalonId == salon.Id).Select(w => new WorkerDto(w.Id, w.Name, w.Active)).ToList();
+        var salonServices = services.Where(s => s.SalonId == salon.Id).Select(s => new ServiceDto(s.Id, s.Name, s.DurationMinutes, s.Active)).ToList();
+        using var document = JsonDocument.Parse(salon.ScheduleJson);
+        return new(salon.Id, salon.Name, salon.AgentId, salon.Timezone, salon.ServicesJson, salon.BarbersJson, salon.KnowledgeNotes,
+            salon.ScheduleJson, salon.IntegrationReady, salonServices.Select(s => s.Name).ToList(), salonWorkers.Select(w => w.Name).ToList(),
+            document.RootElement.Clone(), salonWorkers, salonServices);
     }
 }

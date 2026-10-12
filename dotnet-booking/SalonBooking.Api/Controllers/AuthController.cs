@@ -17,20 +17,26 @@ public sealed class AuthController(IBookingDbContext db) : ControllerBase
     {
         var username = (request.Username ?? "").Trim();
         var password = request.Password ?? "";
-        var adminUser = Environment.GetEnvironmentVariable("ADMIN_USER") ?? "admin";
-        var adminPassword = Environment.GetEnvironmentVariable("ADMIN_PASSWORD") ?? "";
-        ApiIdentity? identity = null;
-        if (string.Equals(username, adminUser, StringComparison.OrdinalIgnoreCase) && password == adminPassword)
-            identity = new("platform", username, null);
-        else
-        {
-            var account = await db.OwnerAccounts.SingleOrDefaultAsync(x => x.Username == username, cancellationToken);
-            if (account is not null && VerifyPassword(password, account.PasswordSalt, account.PasswordHash))
-                identity = new("owner", account.Username, account.SalonId);
-        }
+        var identity = await AuthenticateAsync(username, password, cancellationToken);
         if (identity is null) return Unauthorized(new { ok = false, error = "Pogrešno korisničko ime ili lozinka" });
         var token = SessionStore.Issue(identity);
         return Ok(new { ok = true, token, user = identity.Username, role = identity.Kind, salon_id = identity.SalonId });
+    }
+
+    private async Task<ApiIdentity?> AuthenticateAsync(string username, string password, CancellationToken cancellationToken)
+    {
+        if (ArePlatformCredentialsValid(username, password)) return new("platform", username, null);
+        var account = await db.OwnerAccounts.SingleOrDefaultAsync(x => x.Username == username, cancellationToken);
+        return account is not null && VerifyPassword(password, account.PasswordSalt, account.PasswordHash)
+            ? new("owner", account.Username, account.SalonId)
+            : null;
+    }
+
+    private static bool ArePlatformCredentialsValid(string username, string password)
+    {
+        var adminUser = Environment.GetEnvironmentVariable("ADMIN_USER") ?? "admin";
+        var adminPassword = Environment.GetEnvironmentVariable("ADMIN_PASSWORD") ?? "";
+        return string.Equals(username, adminUser, StringComparison.OrdinalIgnoreCase) && password == adminPassword;
     }
 
     [HttpGet("me")]

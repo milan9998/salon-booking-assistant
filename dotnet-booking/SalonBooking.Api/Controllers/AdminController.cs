@@ -32,16 +32,13 @@ public sealed class AdminController(IBookingDbContext db, IMediator mediator) : 
         var agentId = (request.AgentId ?? "").Trim();
         var workers = Split(request.Barbers);
         var services = Split(request.Services);
-        if (name.Length is < 1 or > 120 || !System.Text.RegularExpressions.Regex.IsMatch(agentId, "^agent_[A-Za-z0-9]+$") || workers.Count == 0 || services.Count == 0)
+        if (!IsValidSalonProfile(name, agentId, workers, services))
             return BadRequest(new { ok = false, error = "Naziv, važeći agent ID, najmanje jedan radnik i jedna usluga su obavezni." });
-        var id = Slug(name);
-        var suffix = 2;
-        while (await db.Salons.AnyAsync(x => x.Id == id, cancellationToken)) id = $"{Slug(name)}-{suffix++}";
-        var schedule = "{\"weekdays\":[1,2,3,4,5,6],\"start\":\"09:00\",\"end\":\"18:00\",\"breaks\":[],\"staff\":{}}";
-        var salon = new Salon(id, name, agentId, "Europe/Belgrade", JsonSerializer.Serialize(services), JsonSerializer.Serialize(workers), request.KnowledgeNotes?.Trim() ?? "", DateTime.UtcNow, null, null, schedule, false);
+        var id = await GenerateUniqueSalonIdAsync(name, cancellationToken);
+        var salon = CreateSalonProfile(id, name, agentId, workers, services, request.KnowledgeNotes);
         db.Salons.Add(salon);
-        foreach (var worker in workers) db.Workers.Add(new Worker($"{id}:worker:{Slug(worker)}", id, worker));
-        foreach (var service in services) db.Services.Add(new SalonService($"{id}:service:{Slug(service)}", id, service, BookingPolicy.Durations.GetValueOrDefault(service, 30)));
+        AddSalonWorkers(id, workers);
+        AddSalonServices(id, services);
         await db.SaveChangesAsync(cancellationToken);
         var result = (await mediator.Send(new GetSalonsQuery(), cancellationToken)).Single(x => x.Id == id);
         return Created($"/api/admin/salons/{id}", new { ok = true, salon = result });
@@ -52,16 +49,54 @@ public sealed class AdminController(IBookingDbContext db, IMediator mediator) : 
     {
         if (!IsPlatform()) return StatusCode(403, new { ok = false, error = "Platform admin required" });
         var username = (request.Username ?? "").Trim().ToLowerInvariant();
-        if (!System.Text.RegularExpressions.Regex.IsMatch(username, "^[a-zA-Z0-9._-]{4,50}$") || await db.OwnerAccounts.AnyAsync(x => x.Username == username, cancellationToken))
+        if (!await IsOwnerUsernameAvailableAsync(username, cancellationToken))
             return BadRequest(new { ok = false, error = "Potreban je jedinstven korisnički nalog (4–50 znakova)." });
         var salon = await db.Salons.SingleOrDefaultAsync(x => x.Id == request.SalonId, cancellationToken);
         if (salon is null) return BadRequest(new { ok = false, error = "Salon nije pronađen." });
-        var temporary = $"Salon-{Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8))}!";
+        var temporary = GenerateTemporaryOwnerPassword();
         var created = AuthController.CreatePassword(temporary);
         db.OwnerAccounts.Add(new OwnerAccount(username, salon.Id, created.Salt, created.Hash, DateTime.UtcNow));
         await db.SaveChangesAsync(cancellationToken);
         return StatusCode(201, new { ok = true, username, salon_id = salon.Id, temporary_password = temporary });
     }
+
+    private static bool IsValidSalonProfile(string name, string agentId, IReadOnlyCollection<string> workers, IReadOnlyCollection<string> services)
+        => name.Length is >= 1 and <= 120 && System.Text.RegularExpressions.Regex.IsMatch(agentId, "^agent_[A-Za-z0-9]+$")
+            && workers.Count > 0 && services.Count > 0;
+
+    private async Task<string> GenerateUniqueSalonIdAsync(string name, CancellationToken cancellationToken)
+    {
+        var id = Slug(name);
+        var suffix = 2;
+        while (await db.Salons.AnyAsync(x => x.Id == id, cancellationToken)) id = $"{Slug(name)}-{suffix++}";
+        return id;
+    }
+
+    private static Salon CreateSalonProfile(string id, string name, string agentId, IReadOnlyList<string> workers,
+        IReadOnlyList<string> services, string? knowledgeNotes)
+    {
+        const string schedule = "{\"weekdays\":[1,2,3,4,5,6],\"start\":\"09:00\",\"end\":\"18:00\",\"breaks\":[],\"staff\":{}}";
+        return new(id, name, agentId, "Europe/Belgrade", JsonSerializer.Serialize(services), JsonSerializer.Serialize(workers),
+            knowledgeNotes?.Trim() ?? "", DateTime.UtcNow, null, null, schedule, false);
+    }
+
+    private void AddSalonWorkers(string salonId, IEnumerable<string> names)
+    {
+        foreach (var name in names) db.Workers.Add(new Worker($"{salonId}:worker:{Slug(name)}", salonId, name));
+    }
+
+    private void AddSalonServices(string salonId, IEnumerable<string> names)
+    {
+        foreach (var name in names)
+            db.Services.Add(new SalonService($"{salonId}:service:{Slug(name)}", salonId, name, BookingPolicy.Durations.GetValueOrDefault(name, 30)));
+    }
+
+    private async Task<bool> IsOwnerUsernameAvailableAsync(string username, CancellationToken cancellationToken)
+        => System.Text.RegularExpressions.Regex.IsMatch(username, "^[a-zA-Z0-9._-]{4,50}$")
+            && !await db.OwnerAccounts.AnyAsync(x => x.Username == username, cancellationToken);
+
+    private static string GenerateTemporaryOwnerPassword()
+        => $"Salon-{Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8))}!";
 
     [HttpPatch("salons/{salonId}/schedule")]
     public async Task<IActionResult> UpdateSchedule(string salonId, [FromBody] ScheduleRequest request, CancellationToken cancellationToken)
