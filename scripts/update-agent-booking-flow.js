@@ -1,19 +1,17 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
+const { getLiveSalons } = require('./live-salons');
+const { responseSettings, checkAvailabilityDescription } = require('./agent-response-policy');
 
-const databasePath = process.env.BOOKING_DB_FILE || path.join(__dirname, '..', 'appointments.db');
-const db = new DatabaseSync(databasePath, { readOnly: true });
 const key = process.env.ELEVENLABS_API_KEY;
 if (!key) throw new Error('Nedostaje ELEVENLABS_API_KEY u .env');
 
 const toolDescriptions = {
-  check_availability: 'Proverava radno vreme, sedmodnevno ograničenje za prosleđeni telefon i najviše dva najbliža slobodna termina. Ako telefon ima sedmodnevni konflikt, vraća next_eligible_date i next_available_slot za tačan sledeći mogući termin.',
+  check_availability: checkAvailabilityDescription,
   book_appointment: 'Zakazuje provereni termin u ovom salonu tek nakon što mušterija potvrdi.',
   cancel_appointment: 'Otkazuje jedinstven potvrđen termin ovog salona na osnovu datuma, vremena i broja telefona; ime mušterije nije potrebno.',
 };
 const expectedToolNames = Object.keys(toolDescriptions);
-const firstMessage = 'Dobar dan, kako mogu da vam pomognem?';
 const spokenServiceNames = {
   sisanje: 'šišanje',
   brada: 'sređivanje brade',
@@ -43,7 +41,7 @@ function fillPrompt(template, salon) {
 }
 
 async function main() {
-  const salons = db.prepare('SELECT id, name, agent_id, services_json, barbers_json, knowledge_notes, webhook_secret_id FROM salons ORDER BY id').all();
+  const salons = await getLiveSalons();
   if (!salons.length) throw new Error('Baza nema salone');
   if (salons.some((salon) => !salon.agent_id || !salon.webhook_secret_id)) {
     throw new Error('Salon bez agent ID-ja ili tajne; ništa nije menjano');
@@ -70,10 +68,12 @@ async function main() {
         throw new Error(`Alati agenta za ${salon.name} nisu vezani za njegov salon i tajnu; ništa nije menjano`);
       }
     }
-    targets.push({ salon, agent, tools, prompt: fillPrompt(template, salon) });
+    const firstMessage = agent.conversation_config?.agent?.first_message;
+    if (!firstMessage) throw new Error(`Agent za ${salon.name} nema pozdravnu poruku; ništa nije menjano`);
+    targets.push({ salon, agent, tools, firstMessage, prompt: fillPrompt(template, salon) });
   }
 
-  for (const { salon, agent, tools, prompt } of targets) {
+  for (const { salon, agent, tools, firstMessage, prompt } of targets) {
     const updatedToolIds = [];
     for (const tool of tools) {
       const name = tool.tool_config.name;
@@ -128,13 +128,17 @@ async function main() {
     }
 
     const response = await api('PATCH', `agents/${salon.agent_id}`, {
-      conversation_config: { agent: { first_message: firstMessage, prompt: { prompt, tool_ids: updatedToolIds } } },
+      conversation_config: { agent: { first_message: firstMessage, prompt: { ...responseSettings(prompt), tool_ids: updatedToolIds } } },
     });
     if (response.agent_id !== salon.agent_id) throw new Error(`Nije potvrđena izmena agenta za ${salon.name}`);
     const verified = await api('GET', `agents/${salon.agent_id}`);
     const finalPrompt = verified.conversation_config?.agent?.prompt?.prompt;
     const finalIds = verified.conversation_config?.agent?.prompt?.tool_ids || [];
-    if (finalPrompt !== prompt || verified.conversation_config?.agent?.first_message !== firstMessage ||
+    if (finalPrompt !== responseSettings(prompt).prompt ||
+        verified.conversation_config?.agent?.prompt?.llm !== 'gpt-4.1-mini' ||
+        verified.conversation_config?.agent?.prompt?.reasoning_effort !== null ||
+        verified.conversation_config?.agent?.prompt?.enable_reasoning_summary !== false ||
+        verified.conversation_config?.agent?.first_message !== firstMessage ||
         updatedToolIds.some((id) => !finalIds.includes(id))) {
       throw new Error(`Završna provera nije prošla za ${salon.name}`);
     }
@@ -142,7 +146,7 @@ async function main() {
   }
 }
 
-main().finally(() => db.close()).catch((error) => {
+main().catch((error) => {
   console.error(error.message);
   process.exitCode = 1;
 });

@@ -1,6 +1,6 @@
 # SalonBooking .NET
 
-Novi .NET backend je postavljen pored postojećeg Node/SQLite sistema:
+Aktivni backend je .NET/PostgreSQL; stari Node/SQLite sistem je sačuvan kao izvor migracije:
 
 - `SalonBooking.Domain` – entiteti i pravila termina
 - `SalonBooking.Application` – CQRS komande, upiti i handleri
@@ -18,7 +18,7 @@ Postojeća baza ostaje u `appointments.db`, a kopija je u `backup-20260925-migra
 Migrator ne briše redove i zaustavlja se ako isti ID već postoji sa drugačijim podacima.
 
 Migracija je urađena u posebnu bazu `salon_booking_v2`; prethodna `salon_booking` baza i SQLite fajl nisu brisani.
-Provera je prošla dva puta bez dupliranja: 4 salona, 8 radnika, 12 usluga, 29 termina i 0 vlasničkih naloga.
+Provera 16.10.2026. potvrdila je isti broj redova u obe baze: 4 salona, 8 radnika, 18 usluga, 34 termina i 0 vlasničkih naloga.
 
 Pre pokretanja postavi connection string samo lokalno, bez slanja lozinke u chat:
 
@@ -27,5 +27,6 @@ $env:POSTGRES_CONNECTION_STRING = "Host=localhost;Port=5432;Database=salon_booki
 dotnet run --project .\SalonBooking.Migrator -- D:\tfw\elevenlabs-txt-booking-demo\appointments.db
 ```
 
-Za lokalni test API je pokrenut na `http://127.0.0.1:18888`; postojeći Node servis na 18787 i njegovi ElevenLabs linkovi nisu menjani dok .NET verzija ne prođe funkcionalne testove.
-`ADMIN_USER` i `ADMIN_PASSWORD` se učitavaju iz lokalnog `.env` fajla. Tek posle završnog testa treba prebaciti Cloudflare/ElevenLabs webhook URL sa starog procesa na .NET proces.
+Jedinstveni .NET API i kalendar pokreću se na `http://127.0.0.1:18787` pomoću `scripts/start-dotnet-api.ps1`.
+Webhook proxy sluša na `18789` i prosleđuje zahteve na .NET API na `18787`; aktivni Cloudflare tunel i svih 12 ElevenLabs webhook alata provereni su 16.10.2026.
+`ADMIN_USER` i `ADMIN_PASSWORD` se učitavaju iz lokalnog `.env` fajla. Ako Cloudflare quick tunnel dobije novu adresu, ažuriraj sva četiri agenta pomoću `scripts/refresh-tunnel-urls.js`.

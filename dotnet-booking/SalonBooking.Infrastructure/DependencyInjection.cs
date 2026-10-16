@@ -15,6 +15,7 @@ public static class DependencyInjection
             ?? throw new InvalidOperationException("POSTGRES_CONNECTION_STRING nije podešen.");
         services.AddDbContext<BookingDbContext>(options => options.UseNpgsql(connection));
         services.AddScoped<IBookingDbContext>(provider => provider.GetRequiredService<BookingDbContext>());
+        services.AddScoped<IBookingTransactionRunner, BookingTransactionRunner>();
         return services;
     }
 }

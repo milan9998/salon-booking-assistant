@@ -4,15 +4,19 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.FileProviders;
 using SalonBooking.Application;
 using SalonBooking.Infrastructure;
+using SalonBooking.Application.Common;
+using SalonBooking.Infrastructure.ElevenLabs;
 
-LoadDotEnv();
+var repositoryRoot = FindRepositoryRoot();
+LoadDotEnv(repositoryRoot);
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddEnvironmentVariables();
+builder.Configuration["Booking:RepositoryRoot"] = repositoryRoot;
 ConfigureServices(builder);
 
 var app = builder.Build();
 app.UseCors();
-var publicRoot = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "public"));
+var publicRoot = Path.Combine(repositoryRoot, "public");
 UsePublicFiles(app, publicRoot);
 app.MapControllers();
 MapHomePage(app, publicRoot);
@@ -23,6 +27,7 @@ static void ConfigureServices(WebApplicationBuilder builder)
     builder.Services.AddApplication();
     builder.Services.AddMediatR(typeof(SalonBooking.Application.DependencyInjection).Assembly);
     builder.Services.AddInfrastructure(builder.Configuration);
+    builder.Services.AddHttpClient<IAgentProvisioner, ElevenLabsAgentProvisioner>(client => client.Timeout = TimeSpan.FromSeconds(30));
     builder.Services.AddControllers().AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
@@ -49,9 +54,18 @@ static void MapHomePage(WebApplication app, string publicRoot)
         app.MapGet("/", () => Results.Ok(new { service = "SalonBooking .NET API", architecture = "Clean Architecture + CQRS" }));
 }
 
-static void LoadDotEnv()
+static string FindRepositoryRoot()
 {
-    var file = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", "..", ".env"));
+    foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        for (var directory = new DirectoryInfo(start); directory is not null; directory = directory.Parent)
+            if (File.Exists(Path.Combine(directory.FullName, "elevenlabs-prompt-template.txt"))
+                && Directory.Exists(Path.Combine(directory.FullName, "public"))) return directory.FullName;
+    throw new InvalidOperationException("Nije pronađen koren booking projekta.");
+}
+
+static void LoadDotEnv(string repositoryRoot)
+{
+    var file = Path.Combine(repositoryRoot, ".env");
     if (!File.Exists(file)) return;
     foreach (var line in File.ReadLines(file)) LoadEnvironmentVariable(line);
 }

@@ -7,9 +7,10 @@ using SalonBooking.Domain.Entities;
 namespace SalonBooking.Application.Appointments;
 
 public sealed record BookAppointmentCommand(string SalonId, DateOnly Date, TimeOnly Time, string Service, string Barber, string CustomerName, string Phone) : IRequest<BookAppointmentResponse>;
-public sealed record BookAppointmentResponse(bool Ok, string? Code, string Message, AppointmentDto? Appointment);
+public sealed record BookAppointmentResponse(bool Ok, string? Code, string Message, AppointmentDto? Appointment,
+    DateOnly? NextEligibleDate = null, NextBookingSlot? NextAvailableSlot = null);
 
-public sealed class BookAppointmentHandler(IBookingDbContext db) : IRequestHandler<BookAppointmentCommand, BookAppointmentResponse>
+public sealed class BookAppointmentHandler(IBookingDbContext db, IBookingTransactionRunner transactionRunner, BookingEligibilityService eligibility) : IRequestHandler<BookAppointmentCommand, BookAppointmentResponse>
 {
     public async Task<BookAppointmentResponse> Handle(BookAppointmentCommand request, CancellationToken cancellationToken)
     {
@@ -24,24 +25,36 @@ public sealed class BookAppointmentHandler(IBookingDbContext db) : IRequestHandl
         var rule = BookingPolicy.CheckSlot(request.Time.ToString("HH:mm"), service.DurationMinutes, request.Date, worker.Name, salon);
         if (rule.Code != "AVAILABLE") return new(false, rule.Code, rule.Reason, null);
         var normalizedPhone = Digits(request.Phone);
-        if (!IsValidSerbianMobilePhone(normalizedPhone))
+        if (!CustomerPhone.IsValid(normalizedPhone))
             return new(false, "INVALID_PHONE", "Broj telefona mora biti srpski mobilni broj koji počinje sa 06.", null);
+        if (string.IsNullOrWhiteSpace(request.CustomerName) || request.CustomerName.Trim().Length > 120)
+            return new(false, "INVALID_NAME", "Recite ime za rezervaciju.", null);
 
-        if (await HasConfirmedBookingWithinSevenDaysAsync(request.SalonId, normalizedPhone, request.Date, cancellationToken))
-            return new(false, "CUSTOMER_WEEKLY_LIMIT", "Za ovaj broj telefona već postoji rezervacija u periodu od sedam dana.", null);
+        var lockKeys = new[]
+        {
+            $"worker-day:{request.SalonId}:{worker.Id}:{request.Date:yyyy-MM-dd}",
+            $"customer-week:{request.SalonId}:{normalizedPhone}"
+        };
 
-        if (await IsWorkerSlotOccupiedAsync(request.SalonId, worker.Id, request.Date, request.Time, service.DurationMinutes, cancellationToken))
-            return new(false, "SLOT_TAKEN", "Termin je u međuvremenu zauzet.", null);
+        return await transactionRunner.ExecuteWithLocksAsync<BookAppointmentResponse>(lockKeys, async transactionToken =>
+        {
+            if (await eligibility.CheckAsync(salon, request.Date, normalizedPhone, worker, service, transactionToken) is { } limit)
+                return new(false, "CUSTOMER_WEEKLY_LIMIT", "Za ovaj broj telefona već postoji rezervacija u periodu od sedam dana.", null,
+                    limit.NextEligibleDate, limit.NextAvailableSlot);
 
-        var appointment = CreateConfirmedAppointment(request, worker, service);
-        db.Appointments.Add(appointment);
-        await db.SaveChangesAsync(cancellationToken);
-        return new(true, null, "Termin je zakazan.", ToDto(appointment, worker, service));
+            if (await IsWorkerSlotOccupiedAsync(request.SalonId, worker.Id, request.Date, request.Time, service.DurationMinutes, transactionToken))
+                return new(false, "SLOT_TAKEN", "Termin je u međuvremenu zauzet.", null);
+
+            var appointment = CreateConfirmedAppointment(request, worker, service, normalizedPhone);
+            db.Appointments.Add(appointment);
+            await db.SaveChangesAsync(transactionToken);
+            return new(true, null, "Termin je zakazan.", ToDto(appointment, worker, service));
+        }, cancellationToken);
     }
 
-    private static Appointment CreateConfirmedAppointment(BookAppointmentCommand request, Worker worker, SalonService service)
+    private static Appointment CreateConfirmedAppointment(BookAppointmentCommand request, Worker worker, SalonService service, string normalizedPhone)
         => new($"BR-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}", "confirmed", request.SalonId,
-            worker.Id, service.Id, request.Date, request.Time, request.CustomerName.Trim(), request.Phone.Trim(), DateTime.UtcNow, null, null);
+            worker.Id, service.Id, request.Date, request.Time, request.CustomerName.Trim(), normalizedPhone, DateTime.UtcNow, null, null);
 
     private async Task<SalonService?> FindActiveServiceAsync(string salonId, string serviceName, CancellationToken cancellationToken)
     {
@@ -55,32 +68,16 @@ public sealed class BookAppointmentHandler(IBookingDbContext db) : IRequestHandl
         return workers.FirstOrDefault(x => string.Equals(x.Name, workerName.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 
-    private static bool IsValidSerbianMobilePhone(string normalizedPhone)
-        => normalizedPhone.Length is >= 9 and <= 10 && normalizedPhone.StartsWith("06", StringComparison.Ordinal);
-
-    private async Task<bool> HasConfirmedBookingWithinSevenDaysAsync(
-        string salonId, string normalizedPhone, DateOnly requestedDate, CancellationToken cancellationToken)
-    {
-        var confirmedAppointments = await db.Appointments.AsNoTracking()
-            .Where(x => x.SalonId == salonId && x.Status == "confirmed")
-            .ToListAsync(cancellationToken);
-        return confirmedAppointments.Any(x =>
-            Digits(x.Phone) == normalizedPhone && Math.Abs(x.Date.DayNumber - requestedDate.DayNumber) < 7);
-    }
-
     private async Task<bool> IsWorkerSlotOccupiedAsync(
         string salonId, string workerId, DateOnly date, TimeOnly time, int durationMinutes, CancellationToken cancellationToken)
     {
         var sameDayAppointments = await db.Appointments.AsNoTracking().Include(x => x.Service)
             .Where(x => x.SalonId == salonId && x.Status == "confirmed" && x.Date == date && x.WorkerId == workerId)
             .ToListAsync(cancellationToken);
-        return sameDayAppointments.Any(x => Overlaps(x.Time, x.Service.DurationMinutes, time, durationMinutes));
+        return sameDayAppointments.Any(x => AppointmentSlots.Overlaps(x.Time, x.Service.DurationMinutes, time, durationMinutes));
     }
 
-    private static bool Overlaps(TimeOnly existingStart, int existingDuration, TimeOnly requestedStart, int requestedDuration)
-        => requestedStart < existingStart.AddMinutes(existingDuration) && existingStart < requestedStart.AddMinutes(requestedDuration);
-
-    public static string Digits(string value) => new(value.Where(char.IsDigit).ToArray());
+    public static string Digits(string value) => CustomerPhone.Normalize(value);
     public static AppointmentDto ToDto(Appointment appointment, Worker worker, SalonService service)
         => new(appointment.Id, appointment.Status, appointment.SalonId, appointment.Date, appointment.Time, service.Name, worker.Name,
             appointment.CustomerName, appointment.Phone, appointment.CreatedAt, appointment.CancelledAt, appointment.CancelledBy,
@@ -90,17 +87,25 @@ public sealed class BookAppointmentHandler(IBookingDbContext db) : IRequestHandl
 public sealed record CancelAppointmentCommand(string SalonId, DateOnly Date, TimeOnly Time, string Phone) : IRequest<CancelAppointmentResponse>;
 public sealed record CancelAppointmentResponse(bool Ok, string? Code, string Message, AppointmentDto? Appointment);
 
-public sealed class CancelAppointmentHandler(IBookingDbContext db) : IRequestHandler<CancelAppointmentCommand, CancelAppointmentResponse>
+public sealed class CancelAppointmentHandler(IBookingDbContext db, IBookingTransactionRunner transactionRunner) : IRequestHandler<CancelAppointmentCommand, CancelAppointmentResponse>
 {
     public async Task<CancelAppointmentResponse> Handle(CancelAppointmentCommand request, CancellationToken cancellationToken)
     {
         var phone = BookAppointmentHandler.Digits(request.Phone);
+        if (!CustomerPhone.IsValid(phone))
+            return new(false, "INVALID_PHONE", "Recite važeći mobilni broj koji počinje sa 06.", null);
+
+        return await transactionRunner.ExecuteWithLocksAsync<CancelAppointmentResponse>(
+            [$"customer-week:{request.SalonId}:{phone}"],
+            token => CancelAsync(request, phone, token), cancellationToken);
+    }
+
+    private async Task<CancelAppointmentResponse> CancelAsync(CancelAppointmentCommand request, string phone, CancellationToken cancellationToken)
+    {
         var phoneMatches = await FindConfirmedAppointmentsByPhoneAsync(request, phone, cancellationToken);
         if (phoneMatches.Count > 1) return new(false, "APPOINTMENT_AMBIGUOUS", "Više termina se poklapa sa datumom, vremenom i brojem telefona; vlasnik treba da proveri koji termin otkazuje.", null);
         var appointment = phoneMatches.SingleOrDefault();
         if (appointment is null) return new(false, "APPOINTMENT_NOT_FOUND", "Potvrđen termin nije pronađen.", null);
-        if (!IsValidSerbianMobilePhone(phone))
-            return new(false, "INVALID_PHONE", "Broj telefona mora biti srpski mobilni broj koji počinje sa 06.", null);
         if (await HasCustomerCancelledWithinSevenDaysAsync(request.SalonId, phone, cancellationToken))
             return new(false, "CUSTOMER_WEEKLY_CANCEL_LIMIT", "Već ste jednom otkazali termin u poslednjih sedam dana. Za novo otkazivanje kontaktirajte salon.", null);
 
@@ -118,14 +123,12 @@ public sealed class CancelAppointmentHandler(IBookingDbContext db) : IRequestHan
         return matches.Where(x => BookAppointmentHandler.Digits(x.Phone) == normalizedPhone).ToList();
     }
 
-    private static bool IsValidSerbianMobilePhone(string normalizedPhone)
-        => normalizedPhone.Length is >= 9 and <= 10 && normalizedPhone.StartsWith("06", StringComparison.Ordinal);
-
     private async Task<bool> HasCustomerCancelledWithinSevenDaysAsync(
         string salonId, string normalizedPhone, CancellationToken cancellationToken)
     {
+        var cutoff = DateTime.UtcNow.AddDays(-7);
         var recentCancellation = await db.Appointments.AsNoTracking()
-            .Where(x => x.SalonId == salonId && x.Status == "cancelled" && x.CancelledBy == "customer" && x.CancelledAt != null)
+            .Where(x => x.SalonId == salonId && x.Status == "cancelled" && x.CancelledBy == "customer" && x.CancelledAt > cutoff)
             .ToListAsync(cancellationToken);
         return recentCancellation.Any(x => BookAppointmentHandler.Digits(x.Phone) == normalizedPhone
             && DateTime.UtcNow - x.CancelledAt!.Value < TimeSpan.FromDays(7));

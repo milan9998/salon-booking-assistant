@@ -52,4 +52,13 @@ public sealed class Salon
         WebhookSecretId = webhookSecretId ?? WebhookSecretId;
         IntegrationReady = true;
     }
+
+    public void SetWebhookCredentials(string hash, string secretId)
+    {
+        WebhookSecretHash = hash;
+        WebhookSecretId = secretId;
+        IntegrationReady = false;
+    }
+
+    public void MarkIntegrationPending() => IntegrationReady = false;
 }

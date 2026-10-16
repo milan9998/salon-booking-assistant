@@ -1,10 +1,7 @@
-const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
+const { getLiveSalons } = require('./live-salons');
 
 const key = process.env.ELEVENLABS_API_KEY;
 if (!key) throw new Error('ELEVENLABS_API_KEY nedostaje');
-const db = new DatabaseSync(process.env.BOOKING_DB_FILE || path.join(__dirname, '..', 'appointments.db'));
-const salons = db.prepare('SELECT id,agent_id,webhook_secret_id,integration_ready FROM salons').all();
 const names = ['check_availability', 'book_appointment', 'cancel_appointment'];
 
 async function get(endpoint) {
@@ -14,6 +11,7 @@ async function get(endpoint) {
 }
 
 (async () => {
+  const salons = await getLiveSalons();
   const listing = await get('tools?page_size=100');
   if (listing.has_more) throw new Error('Nepotpuna lista alata');
   for (const salon of salons) {
@@ -37,12 +35,16 @@ async function get(endpoint) {
     }
     const check = tools.find((tool) => tool.tool_config.name === 'check_availability');
     const schema = check.tool_config.api_schema?.request_body_schema;
+    const prompt = agent.conversation_config?.agent?.prompt?.prompt || '';
+    const phoneQuestionIndex = prompt.indexOf('Recite mi broj telefona');
+    const nameQuestionIndex = prompt.indexOf('Kako se zovete');
     if (!schema?.properties?.time || schema.required?.includes('barber') ||
-        !agent.conversation_config?.agent?.prompt?.prompt?.includes('PRE POTVRDE obavezno pozovi check_availability PONOVO')) {
-      throw new Error(`${salon.id}: rana provera vremena nije podešena`);
+        !prompt.includes('Čim dobiješ broj, pozovi check_availability ponovo') ||
+        phoneQuestionIndex < 0 || nameQuestionIndex < 0 || phoneQuestionIndex > nameQuestionIndex) {
+      throw new Error(`${salon.id}: provera telefona i raspored pitanja nisu ispravno podešeni`);
     }
     console.log(`${salon.id}: agent i 3 alata odgovaraju zasebnoj tajni`);
   }
   if (new Set(salons.map((salon) => salon.webhook_secret_id)).size !== salons.length) throw new Error('Dva salona dele istu tajnu');
-  console.log('Sva četiri salona imaju različite tajne.');
+  console.log(`Svih ${salons.length} salona ima različite tajne.`);
 })().catch((error) => { console.error(error.message); process.exitCode = 1; });

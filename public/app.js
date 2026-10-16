@@ -10,6 +10,7 @@ const state = {
 };
 let widgetScriptPromise;
 let callRefreshTimer;
+let appointmentLoadSequence = 0;
 const $ = (id) => document.getElementById(id);
 const monthNames = ["Januar", "Februar", "Mart", "April", "Maj", "Jun", "Jul", "Avgust", "Septembar", "Oktobar", "Novembar", "Decembar"];
 const pad = (n) => String(n).padStart(2, "0");
@@ -24,7 +25,7 @@ async function api(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && path !== "/api/login" && requestToken && state.token === requestToken) expireSession();
-    const error = new Error(response.status === 401 && path !== "/api/login" ? "Sesija je istekla. Prijavite se ponovo." : data.error || `Greška ${response.status}`);
+    const error = new Error(response.status === 401 && path !== "/api/login" ? "Sesija je istekla. Prijavite se ponovo." : data.error || data.message || `Greška ${response.status}`);
     error.status = response.status;
     throw error;
   }
@@ -81,6 +82,7 @@ async function openCallDialog() {
   }, 5000);
   try {
     await ensureWidgetScript();
+    if (!dialog.open || selectedSalon()?.id !== salon.id) return;
     const widget = document.createElement("elevenlabs-convai"); widget.setAttribute("agent-id", salon.agent_id); widget.setAttribute("variant", "expanded"); widget.setAttribute("start-call-text", "Započni poziv"); host.appendChild(widget);
     $("callInfo").textContent = "Klikni Započni poziv i dozvoli mikrofon. Agent će koristiti alate iz ovog salona.";
   } catch (error) { $("callInfo").textContent = error.message; }
@@ -93,7 +95,15 @@ $("callDialog").addEventListener("close", () => {
   if (state.token) loadAppointments().catch(() => {});
 });
 
-async function loadAppointments() { const data = await api(`/api/appointments?salon_id=${encodeURIComponent(state.selectedSalonId)}`); state.appointments = data.appointments || []; render(); }
+async function loadAppointments() {
+  const salonId = state.selectedSalonId;
+  const token = state.token;
+  const sequence = ++appointmentLoadSequence;
+  const data = await api(`/api/appointments?salon_id=${encodeURIComponent(salonId)}`);
+  if (salonId !== state.selectedSalonId || token !== state.token || sequence !== appointmentLoadSequence) return;
+  state.appointments = data.appointments || [];
+  render();
+}
 function visibleAppointments() { return state.selectedBarber ? state.appointments.filter((appointment) => appointment.barber === state.selectedBarber) : state.appointments; }
 function render() { $("monthTitle").textContent = `${monthNames[state.month.getMonth()]} ${state.month.getFullYear()}`; renderStaffFilters(); renderCalendar(); renderDay(); }
 
@@ -141,7 +151,7 @@ $("appointments").addEventListener("click", async (event) => {
 function fillScheduleForm() {
   const base = selectedSalon()?.schedule;
   if (!base) return;
-  const schedule = base.staff[$("scheduleStaff").value] || base;
+  const schedule = base.staff?.[$("scheduleStaff").value] || base;
   $("scheduleDays").value = schedule.weekdays.join(",");
   $("scheduleStart").value = schedule.start;
   $("scheduleEnd").value = schedule.end;
@@ -170,6 +180,7 @@ $("scheduleForm").addEventListener("submit", async (event) => {
     });
     const previous = selectedSalon().schedule;
     const schedule = structuredClone(previous);
+    schedule.staff ||= {};
     const updatedWindow = { weekdays, start: $("scheduleStart").value, end: $("scheduleEnd").value, breaks };
     if ($("scheduleStaff").value) schedule.staff[$("scheduleStaff").value] = updatedWindow;
     else Object.assign(schedule, updatedWindow);
@@ -182,7 +193,14 @@ function openSalonDialog() { const dialog = $("salonDialog"); $("salonError").te
 function closeSalonDialog() { const dialog = $("salonDialog"); if (typeof dialog.close === "function") dialog.close(); else dialog.removeAttribute("open"); }
 
 $("loginForm").addEventListener("submit", async (event) => { event.preventDefault(); $("loginError").textContent = ""; try { const data = await api("/api/login", { method: "POST", body: JSON.stringify({ username: $("username").value, password: $("password").value }) }); state.token = data.token; state.role = data.role; sessionStorage.setItem("salon_token", state.token); $("userLabel").textContent = data.user; showLoggedIn(true); await loadSalons(); await loadAppointments(); } catch (error) { $("loginError").textContent = error.message; } });
-$("salonSelect").addEventListener("change", async (event) => { state.selectedSalonId = event.target.value; state.selectedBarber = null; sessionStorage.setItem("salon_id", state.selectedSalonId); renderSalonMeta(); renderAccess(); try { await loadAppointments(); } catch (error) { alert(error.message); } });
+$("salonSelect").addEventListener("change", async (event) => {
+  state.selectedSalonId = event.target.value;
+  state.selectedBarber = null;
+  state.appointments = [];
+  sessionStorage.setItem("salon_id", state.selectedSalonId);
+  renderSalonMeta(); renderAccess(); render();
+  try { await loadAppointments(); } catch (error) { alert(error.message); }
+});
 $("provisionBtn").addEventListener("click", async () => {
   const salon = selectedSalon();
   if (!salon || !confirm(`Povezati ${salon.name}? Ovo postavlja znanje u prompt agenta i kreira tri posebna webhook alata. Postojeći prompt tog agenta biće zamenjen.`)) return;

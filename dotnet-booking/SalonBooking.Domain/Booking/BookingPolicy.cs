@@ -40,16 +40,26 @@ public static class BookingPolicy
         return breaks.ToArray();
     }
 
-    public static SlotDecision CheckSlot(string time, int durationMinutes, DateOnly date, string barber, Salon salon, TimeZoneInfo? zone = null)
+    public static DateTimeOffset LocalNow(Salon salon, TimeZoneInfo? zone = null, DateTimeOffset? now = null)
+        => TimeZoneInfo.ConvertTime(now ?? DateTimeOffset.UtcNow, zone ?? TimeZoneInfo.FindSystemTimeZoneById(salon.Timezone));
+
+    public static SlotDecision CheckSlot(string time, int durationMinutes, DateOnly date, string barber, Salon salon,
+        TimeZoneInfo? zone = null, DateTimeOffset? now = null)
     {
         var window = ReadSchedule(salon, barber);
         var start = TimeOnly.ParseExact(time, "HH:mm", CultureInfo.InvariantCulture);
-        if (date < DateOnly.FromDateTime(DateTime.UtcNow)) return new("PAST_DATE", "Ne zakazujemo termine u prošlosti.");
+        var localNow = LocalNow(salon, zone, now);
+        var today = DateOnly.FromDateTime(localNow.DateTime);
+        if (date < today) return new("PAST_DATE", "Ne zakazujemo termine u prošlosti.");
+        if (date == today && start <= TimeOnly.FromDateTime(localNow.DateTime))
+            return new("PAST_TIME", "To vreme je već prošlo.");
+        if (durationMinutes <= 0) return new("INVALID_SERVICE_DURATION", "Trajanje usluge nije ispravno podešeno.");
         if (!window.Weekdays.Contains((int)date.DayOfWeek)) return new("CLOSED_DAY", $"{barber} ne radi tog dana.");
         if (start.Minute % 30 != 0) return new("INVALID_TIME", "Termini počinju na pun sat ili pola sata.");
         var end = start.AddMinutes(durationMinutes);
         var close = TimeOnly.ParseExact(window.End, "HH:mm", CultureInfo.InvariantCulture);
-        if (start < TimeOnly.ParseExact(window.Start, "HH:mm", CultureInfo.InvariantCulture) || end > close)
+        if (start < TimeOnly.ParseExact(window.Start, "HH:mm", CultureInfo.InvariantCulture)
+            || start.ToTimeSpan().TotalMinutes + durationMinutes > close.ToTimeSpan().TotalMinutes)
             return CreateOutsideHoursDecision(window, barber, durationMinutes, close);
         var pause = FindOverlappingBreak(window.Breaks, start, end);
         if (pause is not null) return new("ON_BREAK", $"{barber} ima pauzu od {pause.Start} do {pause.End}.");

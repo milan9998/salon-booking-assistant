@@ -36,7 +36,8 @@ public sealed class AuthController(IBookingDbContext db) : ControllerBase
     {
         var adminUser = Environment.GetEnvironmentVariable("ADMIN_USER") ?? "admin";
         var adminPassword = Environment.GetEnvironmentVariable("ADMIN_PASSWORD") ?? "";
-        return string.Equals(username, adminUser, StringComparison.OrdinalIgnoreCase) && password == adminPassword;
+        return !string.IsNullOrWhiteSpace(adminPassword)
+            && string.Equals(username, adminUser, StringComparison.OrdinalIgnoreCase) && password == adminPassword;
     }
 
     [HttpGet("me")]

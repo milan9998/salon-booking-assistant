@@ -67,8 +67,16 @@ test('novi salon dobija samo svoja tri alata i prompt iz svog znanja', async () 
     assert.match(agentPrompt.prompt, /Radi samo po zakazivanju/);
     assert.match(agentPrompt.prompt, /Jana/);
     assert.match(agentPrompt.prompt, /najviše DVA najbliža termina/);
-    assert.match(agentPrompt.prompt, /PRE POTVRDE obavezno pozovi check_availability PONOVO/);
+    assert.match(agentPrompt.prompt, /neposredno pre završne potvrde pozovi check_availability još jednom/);
     assert.match(agentPrompt.prompt, /Ne nudi ponoć kao alternativu/);
+    assert.match(agentPrompt.prompt, /NEED_STAFF NIJE potvrda dostupnosti/);
+    assert.match(agentPrompt.prompt, /samo završnu, kratku repliku/);
+    assert.ok(agentPrompt.prompt.indexOf('Recite mi broj telefona') < agentPrompt.prompt.indexOf('Kako se zovete'));
+    assert.match(agentPrompt.prompt, /Nemoj još tražiti ime/);
+    assert.equal(agentPrompt.llm, 'gpt-4.1-mini');
+    assert.equal(agentPrompt.thinking_budget, null);
+    assert.equal(agentPrompt.reasoning_effort, null);
+    assert.equal(agentPrompt.enable_reasoning_summary, false);
     assert.ok(availabilityTool.tool_config.description.includes('najviše dva najbliža'));
     const cancellationTool = tools.slice(3).find((tool) => tool.tool_config.name === 'cancel_appointment');
     assert.equal(cancellationTool.tool_config.api_schema.request_body_schema.properties.customer_name, undefined);

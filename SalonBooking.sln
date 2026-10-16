@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SalonBooking.Api", "dotnet-
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SalonBooking.Migrator", "dotnet-booking\SalonBooking.Migrator\SalonBooking.Migrator.csproj", "{842CF6CC-DA21-4901-8178-5180B47031A4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SalonBooking.Tests", "dotnet-booking\SalonBooking.Tests\SalonBooking.Tests.csproj", "{D4C84AE9-B5EC-476E-9527-21B0A53E9A03}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -44,6 +46,10 @@ Global
 		{842CF6CC-DA21-4901-8178-5180B47031A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{842CF6CC-DA21-4901-8178-5180B47031A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{842CF6CC-DA21-4901-8178-5180B47031A4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D4C84AE9-B5EC-476E-9527-21B0A53E9A03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4C84AE9-B5EC-476E-9527-21B0A53E9A03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4C84AE9-B5EC-476E-9527-21B0A53E9A03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4C84AE9-B5EC-476E-9527-21B0A53E9A03}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{B20A86F0-26BF-4057-8C80-65A5C7B07ACC} = {5E0A1018-CAF2-495B-8166-286B8D90D4CF}

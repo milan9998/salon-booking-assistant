@@ -1,15 +1,21 @@
-# ElevenLabs TXT booking demo
+# Salon booking voice assistant
 
-Mali testni API sa SQLite bazom. Rezervacije se cuvaju u `appointments.db`.
+Glavna aplikacija za lokalno testiranje je ASP.NET Core (.NET) sa PostgreSQL bazom.
+Kalendar i booking API koriste isti backend i iste podatke; SQLite `appointments.db`
+se čuva kao izvorna kopija/migracioni backup, a Node server više nije aktivni backend.
 
 ## Pokretanje
 
-Čuvaj podešavanja u lokalnom `.env` na D: disku. Postavi nasumičnu
-`ADMIN_PASSWORD` i ElevenLabs API ključ, pa pokreni:
+Čuvaj podešavanja u lokalnom `.env` na D: disku. PostgreSQL servis mora biti
+pokrenut, a `POSTGRES_CONNECTION_STRING`, `ADMIN_PASSWORD` i ElevenLabs API ključ
+moraju biti podešeni. Pokreni jedinstveni .NET API i kalendar:
 
 ```powershell
-node --env-file=.env server.js
+powershell -ExecutionPolicy Bypass -File .\scripts\start-dotnet-api.ps1
 ```
+
+Aplikacija i kalendar su na `http://127.0.0.1:18787/`. Nemoj paralelno pokretati
+`node --env-file=.env server.js`: to je stari SQLite backend i koristi isti port.
 
 Proveru ElevenLabs ključa pokreni bez prikazivanja samog ključa:
 
@@ -21,7 +27,10 @@ ElevenLabs API ključ služi samo backendu. Svaki salon koristi svoju
 odvojenu tajnu za webhook; stari zajednički `BOOKING_API_SECRET` je isključen
 u živom režimu. Testovi koriste izdvojenu bazu i eksplicitni testni režim.
 
-API se pokrece na `http://127.0.0.1:8787` (za naš test koristi se port `18787`). Baza se automatski napravi pri prvom pokretanju.
+Webhook proxy sluša na `127.0.0.1:18789` i prosleđuje samo booking rute na isti
+.NET API na `18787`. Cloudflare tunel ide do proxy-ja. Ako se privremeni tunel
+promeni posle restarta, pokreni `scripts/refresh-tunnel-urls.js` sa novom HTTPS
+adresom; skripta proverava salon i tajne i ažurira ElevenLabs alate.
 
 ## Lokalni kalendar
 
@@ -110,7 +119,22 @@ Telefon se poredi normalizovano, pa rade i međunarodni `+381...` i lokalni `06.
 
 ## Testovi
 
-Izolovani testovi koriste posebnu privremenu bazu i port `18887`, pa ne menjaju
+Glavni backend se proverava .NET testovima:
+
+```powershell
+dotnet test .\SalonBooking.sln
+```
+
+Za PostgreSQL integracione testove postavi lokalni `POSTGRES_TEST_CONNECTION_STRING`.
+Testovi iz njega koriste pristup serveru, prave isključivo nove baze `booking_test_<guid>`
+i uklanjaju ih po završetku; ne upisuju u bazu salona. Bez te promenljive PostgreSQL
+testovi se preskaču, pa takav rezultat nije puna provera backenda.
+
+Skripte `refresh-tunnel-urls.js`, `verify-integration.js`, `update-agent-booking-flow.js`
+i `update-agent-responses.js` čitaju salone iz prijavljenog .NET API-ja/PostgreSQL-a.
+SQLite se više ne koristi kao izvor za te operativne komande.
+
+Posebni legacy Node/frontend testovi koriste privremenu bazu i port `18887`, pa ne menjaju
 `appointments.db` niti aktivni lokalni API:
 
 ```powershell

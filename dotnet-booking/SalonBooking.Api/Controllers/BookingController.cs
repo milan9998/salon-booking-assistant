@@ -22,7 +22,13 @@ public sealed class BookingController(IMediator mediator, IBookingDbContext db) 
 
     [HttpGet("salons")]
     public async Task<IActionResult> Salons(CancellationToken cancellationToken)
-        => await mediator.Send(new GetSalonsQuery(), cancellationToken) is { } salons ? Ok(new { ok = true, salons }) : Ok();
+    {
+        if (!SessionStore.TryGet(Request, out var identity) || identity is null)
+            return Unauthorized(new { ok = false, error = "Session required" });
+        var salons = await mediator.Send(new GetSalonsQuery(), cancellationToken);
+        if (identity.Kind == "owner") salons = salons.Where(x => x.Id == identity.SalonId).ToList();
+        return Ok(new { ok = true, salons });
+    }
 
     [HttpGet("appointments")]
     public async Task<IActionResult> Appointments([FromQuery(Name = "salon_id")] string salonId, CancellationToken cancellationToken)
@@ -37,7 +43,7 @@ public sealed class BookingController(IMediator mediator, IBookingDbContext db) 
         var salonId = request.SalonId ?? HeaderSalonId();
         if (!await IsAuthorizedForSalonAsync(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
         if (!DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", out var date)) return Ok(new { ok = false, code = "INVALID_DATE", reason = "Potreban je važeći datum u formatu YYYY-MM-DD." });
-        var result = await mediator.Send(new CheckAvailabilityQuery(salonId, date, request.Service ?? "", request.Barber, request.Time), cancellationToken);
+        var result = await mediator.Send(new CheckAvailabilityQuery(salonId, date, request.Service ?? "", request.Barber, request.Time, request.Phone), cancellationToken);
         return Ok(result);
     }
 
@@ -46,7 +52,7 @@ public sealed class BookingController(IMediator mediator, IBookingDbContext db) 
     {
         var salonId = request.SalonId ?? HeaderSalonId();
         if (!await IsAuthorizedForSalonAsync(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
-        if (!TryParseAppointmentDateTime(request.Date, request.Time, out var date, out var time)) return BadRequest(new { ok = false, error = "Potrebni su date u formatu YYYY-MM-DD i time u formatu HH:MM." });
+        if (!TryParseAppointmentDateTime(request.Date, request.Time, out var date, out var time)) return Ok(DateTimeError(request.Date));
         var result = await mediator.Send(new BookAppointmentCommand(salonId, date, time, request.Service ?? "", request.Barber ?? "", request.CustomerName ?? "", request.Phone ?? ""), cancellationToken);
         return result.Ok ? StatusCode(201, result) : Ok(result);
     }
@@ -56,12 +62,18 @@ public sealed class BookingController(IMediator mediator, IBookingDbContext db) 
     {
         var salonId = request.SalonId ?? HeaderSalonId();
         if (!await IsAuthorizedForSalonAsync(salonId, cancellationToken)) return Unauthorized(new { ok = false, error = "Unauthorized" });
-        if (!TryParseAppointmentDateTime(request.Date, request.Time, out var date, out var time)) return BadRequest(new { ok = false, error = "Potrebni su date u formatu YYYY-MM-DD i time u formatu HH:MM." });
+        if (!TryParseAppointmentDateTime(request.Date, request.Time, out var date, out var time)) return Ok(DateTimeError(request.Date));
         var result = await mediator.Send(new CancelAppointmentCommand(salonId, date, time, request.Phone ?? ""), cancellationToken);
-        return result.Ok ? Ok(result) : NotFound(result);
+        // Business outcomes must remain readable to the voice tool. Non-2xx responses
+        // are treated as transport failures by ElevenLabs and hide the domain code.
+        return Ok(result);
     }
 
     private string HeaderSalonId() => Request.Headers.TryGetValue("X-Salon-Id", out var value) && !string.IsNullOrWhiteSpace(value) ? value.ToString() : "default";
+
+    private static object DateTimeError(string? date)
+        => new { ok = false, code = DateOnly.TryParseExact(date, "yyyy-MM-dd", out _) ? "INVALID_TIME" : "INVALID_DATE",
+            message = "Potreban je važeći datum YYYY-MM-DD i vreme HH:MM." };
 
     private static bool TryParseAppointmentDateTime(string? dateText, string? timeText, out DateOnly date, out TimeOnly time)
     {
@@ -87,7 +99,7 @@ public sealed class BookingController(IMediator mediator, IBookingDbContext db) 
     }
 }
 
-public sealed record AvailabilityRequest(string? SalonId, string? Date, string? Service, string? Barber, string? Time);
+public sealed record AvailabilityRequest(string? SalonId, string? Date, string? Service, string? Barber, string? Time, string? Phone = null);
 public sealed record BookRequest(string? SalonId, string? Date, string? Time, string? Service, string? Barber, string? CustomerName, string? Phone);
 public sealed record CancelRequest(string? SalonId, string? CustomerName, string? Date, string? Time, string? Phone);
 

@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { responseSettings, checkAvailabilityDescription } = require('./agent-response-policy');
 
 const toolNames = ['check_availability', 'book_appointment', 'cancel_appointment'];
 const maxConversationSeconds = 90;
@@ -78,7 +79,7 @@ async function provisionSalon(db, salon, services, barbers) {
     // cannot pass the phone needed for the weekly-limit precheck.
     const config = structuredClone(tool.tool_config);
     config.description = {
-      check_availability: 'Proverava radno vreme, sedmodnevno ograničenje za prosleđeni telefon i najviše dva najbliža slobodna termina. Ako telefon ima sedmodnevni konflikt, vraća next_eligible_date i next_available_slot za tačan sledeći mogući termin.',
+      check_availability: checkAvailabilityDescription,
       book_appointment: 'Zakazuje provereni termin u ovom salonu tek nakon što mušterija potvrdi.',
       cancel_appointment: 'Otkazuje jedinstven potvrđen termin ovog salona na osnovu datuma, vremena i broja telefona; ime mušterije nije potrebno.',
     }[name];
@@ -123,12 +124,14 @@ async function provisionSalon(db, salon, services, barbers) {
   await api('PATCH', `agents/${salon.agent_id}`, {
     conversation_config: {
       conversation: { max_duration_seconds: maxConversationSeconds },
-      agent: { first_message: firstMessage, prompt: { prompt, tool_ids: toolIds }, max_conversation_duration_message: maxConversationMessage },
+      agent: { first_message: firstMessage, prompt: { ...responseSettings(prompt), tool_ids: toolIds }, max_conversation_duration_message: maxConversationMessage },
     },
   });
   const updated = await api('GET', `agents/${salon.agent_id}`);
   const updatedPrompt = updated.conversation_config?.agent?.prompt;
-  if (updatedPrompt?.prompt !== prompt || updated.conversation_config?.agent?.first_message !== firstMessage ||
+  if (updatedPrompt?.prompt !== responseSettings(prompt).prompt || updatedPrompt.llm !== 'gpt-4.1-mini' ||
+      updatedPrompt.reasoning_effort !== null || updatedPrompt.enable_reasoning_summary !== false ||
+      updated.conversation_config?.agent?.first_message !== firstMessage ||
       toolIds.some((id) => !updatedPrompt.tool_ids?.includes(id)) ||
       updated.conversation_config?.conversation?.max_duration_seconds !== maxConversationSeconds ||
       updated.conversation_config?.agent?.max_conversation_duration_message !== maxConversationMessage) {

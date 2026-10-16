@@ -1,12 +1,9 @@
-const { DatabaseSync } = require('node:sqlite');
-const path = require('node:path');
+const { getLiveSalons } = require('./live-salons');
 
 const base = process.argv[2];
 const key = process.env.ELEVENLABS_API_KEY;
 if (!key) throw new Error('ELEVENLABS_API_KEY nedostaje');
 if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(base || '')) throw new Error('Navedi proverenu HTTPS trycloudflare adresu bez završne kose crte');
-const db = new DatabaseSync(process.env.BOOKING_DB_FILE || path.join(__dirname, '..', 'appointments.db'));
-const salons = db.prepare('SELECT id,agent_id,webhook_secret_id FROM salons WHERE integration_ready = 1').all();
 const names = new Set(['check_availability', 'book_appointment', 'cancel_appointment']);
 
 async function api(method, endpoint, body) {
@@ -19,9 +16,10 @@ async function api(method, endpoint, body) {
 }
 
 (async () => {
+  const salons = (await getLiveSalons()).filter(salon => salon.integration_ready);
   const check = await fetch(`${base}/`);
   if (!check.ok) throw new Error(`Novi tunel nije dostupan: HTTP ${check.status}`);
-  if (salons.length !== 4) throw new Error('Očekivana su četiri povezana salona');
+  if (!salons.length) throw new Error('Nema povezanih salona u PostgreSQL aplikaciji');
   const listing = await api('GET', 'tools?page_size=100');
   if (listing.has_more) throw new Error('Lista alata nije potpuna');
   const updates = [];
@@ -50,7 +48,7 @@ async function api(method, endpoint, body) {
         verified.tool_config?.api_schema?.request_headers?.['X-Agent-Secret']?.secret_id !== salon.webhook_secret_id) {
       throw new Error(`${salon.id}: novi URL ili tajna nisu potvrđeni za ${tool.id}`);
     }
-    console.log(`${salon.id}: ${tool.tool_config.name} → novi tunel`);
+    console.log(`${salon.id}: ${tool.tool_config.name} → URL potvrđen`);
   }
   console.log(`Potvrđeno ${updates.length} webhook alata.`);
 })().catch((error) => { console.error(error.message); process.exitCode = 1; });

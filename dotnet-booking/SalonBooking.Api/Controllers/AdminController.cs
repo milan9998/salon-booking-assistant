@@ -13,7 +13,7 @@ namespace SalonBooking.Api.Controllers;
 
 [ApiController]
 [Route("api")]
-public sealed class AdminController(IBookingDbContext db, IMediator mediator) : ControllerBase
+public sealed class AdminController(IBookingDbContext db, IMediator mediator, IBookingTransactionRunner transactionRunner) : ControllerBase
 {
     [HttpGet("admin/salons")]
     public async Task<IActionResult> GetSalons(CancellationToken cancellationToken)
@@ -34,6 +34,8 @@ public sealed class AdminController(IBookingDbContext db, IMediator mediator) : 
         var services = Split(request.Services);
         if (!IsValidSalonProfile(name, agentId, workers, services))
             return BadRequest(new { ok = false, error = "Naziv, važeći agent ID, najmanje jedan radnik i jedna usluga su obavezni." });
+        if (await db.Salons.AnyAsync(x => x.AgentId == agentId, cancellationToken))
+            return BadRequest(new { ok = false, error = "Ovaj agent već pripada drugom salonu. Izaberite poseban agent." });
         var id = await GenerateUniqueSalonIdAsync(name, cancellationToken);
         var salon = CreateSalonProfile(id, name, agentId, workers, services, request.KnowledgeNotes);
         db.Salons.Add(salon);
@@ -105,6 +107,9 @@ public sealed class AdminController(IBookingDbContext db, IMediator mediator) : 
         if (request.Schedule.ValueKind != JsonValueKind.Object) return BadRequest(new { ok = false, error = "Neispravan raspored" });
         var salon = await db.Salons.SingleOrDefaultAsync(x => x.Id == salonId, cancellationToken);
         if (salon is null) return NotFound(new { ok = false, error = "Salon nije pronađen" });
+        var workers = await db.Workers.Where(x => x.SalonId == salonId && x.Active).Select(x => x.Name).ToListAsync(cancellationToken);
+        if (!ScheduleValidation.IsValid(request.Schedule, workers))
+            return BadRequest(new { ok = false, error = "Proverite radne dane, početak/kraj radnog vremena i pauze." });
         salon.UpdateSchedule(request.Schedule.GetRawText());
         await db.SaveChangesAsync(cancellationToken);
         return Ok(new { ok = true, salon = (await mediator.Send(new GetSalonsQuery(), cancellationToken)).Single(x => x.Id == salonId) });
@@ -127,9 +132,18 @@ public sealed class AdminController(IBookingDbContext db, IMediator mediator) : 
     {
         if (!SessionStore.TryGet(Request, out var identity) || identity is null || (identity.Kind != "owner" && identity.Kind != "platform"))
             return StatusCode(403, new { ok = false, error = "Session required" });
-        var appointment = await db.Appointments.Include(x => x.Worker).Include(x => x.Service).SingleOrDefaultAsync(x => x.Id == request.AppointmentId, cancellationToken);
+        var appointment = await db.Appointments.AsNoTracking().SingleOrDefaultAsync(x => x.Id == request.AppointmentId, cancellationToken);
         if (appointment is null) return NotFound(new { ok = false, error = "Termin nije pronađen" });
         if (identity.Kind == "owner" && identity.SalonId != appointment.SalonId) return StatusCode(403, new { ok = false, error = "Salon nije dostupan ovom nalogu" });
+        return await transactionRunner.ExecuteWithLocksAsync<IActionResult>(
+            [$"customer-week:{appointment.SalonId}:{CustomerPhone.Normalize(appointment.Phone)}"],
+            token => CancelAsOwnerAsync(request.AppointmentId, token), cancellationToken);
+    }
+
+    private async Task<IActionResult> CancelAsOwnerAsync(string appointmentId, CancellationToken cancellationToken)
+    {
+        var appointment = await db.Appointments.Include(x => x.Worker).Include(x => x.Service)
+            .SingleAsync(x => x.Id == appointmentId, cancellationToken);
         if (appointment.Status != "confirmed") return BadRequest(new { ok = false, error = "Termin više nije potvrđen" });
         appointment.Cancel("owner", DateTime.UtcNow);
         await db.SaveChangesAsync(cancellationToken);
